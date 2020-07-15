@@ -1,0 +1,198 @@
+---
+title: "4123212_assignment_prediction"
+output:
+  html_document: default
+  word_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+The dataset is a simple housing price dataset. The information it contains is restricted to houses in california. The columns it has are focused around its area, features such as population, households, location (in the form of coordinates). Furthermore, the dataset contains information about the house itself. Features such as amount of bedrooms, amount of rooms, median income of the household, house value. Furthermore, the feature in question, is the feature that describes the proximity of the house to a body of water. Either in the bay area, near the ocean or sea, or inland. 
+
+This assignment will apply classification techniques on the dataset. Three types will be attempted, for which the best will be chosen. k-nearest neighbors will be used, logistic regression and linear discriminant analysis as well. In order to do this, the column that captures the proximity to water has been transformed to a boolean type where all the classes that describe a house being in close proximity to the water as TRUE and the others as FALSE. This classification is then to be predicted. 
+
+```{r cars}
+rm(list = ls())
+library(MASS)
+library(class)
+library(ISLR)
+library(tidyverse)
+library(pROC)
+```
+
+Load the dataset and show a short exerpt of it
+```{r}
+data <- read_csv("Data\\housing.csv")
+head(data)
+```
+
+Transform the proximity to water to a boolean type, omit rows with missing values and plot the data using two variables: median income and median house value
+```{r}
+data <- data %>% mutate(near_water = ifelse(ocean_proximity =="INLAND", FALSE, TRUE))
+data <- na.omit(data)
+data %>% ggplot(aes(x = median_income, y = median_house_value, color = near_water)) + geom_point()
+```
+
+Create an accuracy function for easy accuracy calculation
+```{r}
+accuracy <- function(matrix)
+  round((matrix[1,1]+matrix[2,2])/sum(matrix)*100, 2)
+```
+
+
+Split the data into train and test sets. 
+```{r}
+amount_of_train <- round(0.8*length(data$longitude),0)
+
+data <- data[,-10] %>% 
+  mutate(split = sample(rep(c("train", "test"), times = c(amount_of_train, 
+                                length(data$latitude)-amount_of_train))))
+
+data_train <- 
+  data %>% 
+  filter(split == "train") %>% 
+  select(-split)
+
+data_test <- 
+  data %>% 
+  filter(split == "test") %>% 
+  select(-split)
+```
+
+First classification method: K-nearest neighbors. this will be tried for 3-nearest, 5-nearest, 9-nearest
+```{r}
+
+knn_3 <- knn(
+  train = data_train[,-10],
+  test  = data_test[,-10],
+  cl    = as.factor(data_train$near_water),
+  k     = 3
+)
+
+knn_5 <- knn(
+  train = data_train[,-10],
+  test  = data_test[,-10],
+  cl    = as.factor(data_train$near_water),
+  k     = 5
+)
+
+knn_9 <- knn(
+  train = data_train[,-10],
+  test  = data_test[,-10],
+  cl    = as.factor(data_train$near_water),
+  k     = 9
+)
+```
+
+
+Create confusion matrices for each model and print the accuracies for each
+```{r}
+confusion_matrix_3 <- table(true = data_test$near_water, predicted = knn_3)
+confusion_matrix_5 <- table(true = data_test$near_water, predicted = knn_5)
+confusion_matrix_9 <- table(true = data_test$near_water, predicted = knn_9)
+
+paste("Accuracy is 3-nearest neighbor: ", accuracy(confusion_matrix_3), "%")
+paste("Accuracy is 5-nearest neighbor: ", accuracy(confusion_matrix_5), "%")
+paste("Accuracy is 9-nearest neighbor: ", accuracy(confusion_matrix_9), "%")
+
+best_k_nearest <- accuracy(confusion_matrix_9)
+```
+It seems that the 9-nearest neighbor is the most accurate of the three models. 
+
+A plot of this model:
+```{r}
+add_column(data_test, pred = knn_9) %>% ggplot(aes(x = median_income, 
+                                                   y = median_house_value, 
+                                                   colour = pred)) + 
+                                          geom_point()
+```
+
+
+Second method: Logistic Regression
+```{r}
+logistic_regression <- glm(near_water ~ ., family = binomial, data = data_train)
+pred <- tibble(value = round(predict(logistic_regression, type = "response", 
+                                     newdata = data_test), 2))
+```
+
+Create an ROC plot in order to evaluate the model
+```{r}
+# Get the correct data
+temporary_set <- data_test %>% mutate(near_water = ifelse(near_water == TRUE, 1, 0))
+
+roc_data <- roc(temporary_set$near_water, pred$value)
+ggroc(roc_data) + theme_minimal() + labs(title = "ROC curve")
+```
+
+```{r}
+roc_data
+```
+The AUC of 0.98 and the ROC curve show us that the model performs quite well!
+
+Transform the predictions to boolean and plot the values
+```{r}
+pred <- pred %>% mutate(value = ifelse(value >= 0.5, TRUE, FALSE))
+add_column(data_test, prediction = pred$value) %>% ggplot(aes(x = median_income, 
+                                                              y = median_house_value, 
+                                                              colour = prediction)) +
+                                                    geom_point()
+```
+
+Plot the confusion matrix for this model
+```{r}
+confusion_matrix <- table(true = data_test$near_water, predicted = pred$value )
+confusion_matrix
+```
+
+Calculate the accuracy
+```{r}
+best_log <- accuracy(confusion_matrix)
+paste("Accuracy of logistic regression is: ", best_log, "%")
+```
+This seems much better than before. Let's try another method anyway!
+
+Third method: Linear Discriminant Analysis
+```{r}
+linear_discriminant <- lda(near_water ~ ., data = data_train)
+linear_discriminant
+```
+
+Show the confusion matrix 
+```{r}
+pred <- predict(linear_discriminant, newdata = data_test)
+confusion_matrix_LDA<-table(true = data_test$near_water, predicted= pred$class)
+confusion_matrix
+```
+
+Calculate the accuracy
+```{r}
+best_lda <- accuracy(confusion_matrix_LDA)
+paste("Accuracy of linear discriminant analysis is: ", best_lda, "%")
+```
+
+Plot the predicted plot
+```{r}
+add_column(data_test, prediction = pred$class) %>% ggplot(aes(x = median_income, 
+                                                              y = median_house_value, 
+                                                              colour = prediction))+
+                                                  geom_point()
+```
+
+Let's compare the best of all three models to see which one would be the best to use:
+```{r}
+model_scores <- c(best_k_nearest, best_log, best_lda)
+
+tibble(Method = as_factor(c("k-means", "logistic regression", "Linear Discriminant Analysis")), MSE = model_scores) %>% 
+  ggplot(aes(x = Method, y = MSE, fill = Method)) +
+  geom_bar(stat = "identity", col = "black") +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  labs(title = "Comparison of test set MSE for different prediction methods")
+```
+
+It seems that the logistic regression model performed the best out of all three of the methods. 
